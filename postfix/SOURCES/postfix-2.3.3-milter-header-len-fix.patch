@@ -1,0 +1,87 @@
+diff -cr /var/tmp/postfix-2.3.4/src/cleanup/cleanup_out.c ./src/cleanup/cleanup_out.c
+*** /var/tmp/postfix-2.3.4/src/cleanup/cleanup_out.c	Tue May 16 20:45:13 2006
+--- ./src/cleanup/cleanup_out.c	Fri Dec  1 21:24:15 2006
+***************
+*** 175,183 ****
+--- 175,196 ----
+       * of such header lines. NB: This code destroys the header. We could try
+       * to avoid clobbering it, but we're not going to use the data any
+       * further.
++      * 
++      * XXX We prefer to truncate a header at the last line boundary before the
++      * header size limit. If this would undershoot the limit by more than
++      * 10%, we truncate between line boundaries to avoid losing too much
++      * text. This "unkind cut" may result in syntax errors and may trigger
++      * warnings from down-stream MTAs.
+       */
+      for (line = start; line; line = next_line) {
+  	next_line = split_at(line, '\n');
++ 	if ((next_line ? next_line - 1 : line + strlen(line))
++ 	    > start + var_header_limit) {
++ 	    if (line - start > 0.9 * var_header_limit)	/* nice cut */
++ 		break;
++ 	    start[var_header_limit] = 0;	/* unkind cut */
++ 	    next_line = 0;
++ 	}
+  	if (line == start || IS_SPACE_TAB(*line)) {
+  	    cleanup_out_string(state, REC_TYPE_NORM, line);
+  	} else {
+diff -cr /var/tmp/postfix-2.3.4/src/cleanup/cleanup_message.c ./src/cleanup/cleanup_message.c
+*** /var/tmp/postfix-2.3.4/src/cleanup/cleanup_message.c	Fri Aug 25 17:30:50 2006
+--- ./src/cleanup/cleanup_message.c	Fri Dec  1 19:24:40 2006
+***************
+*** 597,602 ****
+--- 597,612 ----
+      time_t  tv;
+  
+      /*
++      * XXX Workaround: when we reach the end of headers, mime_state_update()
++      * may execute up to three call-backs before returning to the caller:
++      * head_out(), head_end(), and body_out() or body_end(). As long as
++      * call-backs don't return a result, each call-back has to check for
++      * itself if the previous call-back experienced a problem.
++      */
++     if (CLEANUP_OUT_OK(state) == 0)
++ 	return;
++ 
++     /*
+       * Add a missing (Resent-)Message-Id: header. The message ID gives the
+       * time in GMT units, plus the local queue ID.
+       * 
+***************
+*** 707,712 ****
+--- 717,732 ----
+      CLEANUP_STATE *state = (CLEANUP_STATE *) context;
+  
+      /*
++      * XXX Workaround: when we reach the end of headers, mime_state_update()
++      * may execute up to three call-backs before returning to the caller:
++      * head_out(), head_end(), and body_out() or body_end(). As long as
++      * call-backs don't return a result, each call-back has to check for
++      * itself if the previous call-back experienced a problem.
++      */
++     if (CLEANUP_OUT_OK(state) == 0)
++ 	return;
++ 
++     /*
+       * Crude message body content filter for emergencies. This code has
+       * several problems: it sees one line at a time; it looks at long lines
+       * only in chunks of line_length_limit (2048) characters; it is easily
+***************
+*** 891,896 ****
+--- 911,925 ----
+  					 (MIME_STATE_ANY_END) 0,
+  					 cleanup_mime_error_callback,
+  					 (void *) state);
++ 
++     /*
++      * XXX Workaround: truncate a long message header so that we don't exceed
++      * the Milter request size limit of 65535.
++      */
++ #define KLUDGE_HEADER_LIMIT	60000
++     if ((cleanup_milters || state->milters)
++ 	&& var_header_limit > KLUDGE_HEADER_LIMIT)
++ 	var_header_limit = KLUDGE_HEADER_LIMIT;
+  
+      /*
+       * Pass control to the header processing routine.
