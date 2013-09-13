@@ -43,7 +43,7 @@
 
 Name: postfix
 Summary: Postfix Mail Transport Agent
-Version: 2.10.1
+Version: 2.10.2
 Release: 1%{?dist}
 Epoch: 2
 Group: System Environment/Daemons
